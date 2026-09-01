@@ -1,398 +1,126 @@
 # ESP32-S3 Bike Computer
 
-A compact GPS-enabled bike computer built around an **ESP32-S3**, **1.28" round GC9A01 TFT display**, **NEO-6M GPS**, and **BME280 environmental sensor**.
-
-The project is designed to provide a motorcycle/bicycle-style dashboard with a speedometer, GPS information, trip data, compass, clock, weather information, barometric pressure and system information.
-
----
+Firmware for a GPS bike computer based on an ESP32-S3, a 240 x 240 GC9A01 round display, a GPS receiver, and a BME280 environmental sensor. The application is built with PlatformIO and the Arduino framework.
 
 ## Features
 
-### Main Dashboard
+- GPS speedometer with automatic 40 km/h and 120 km/h gauge ranges.
+- GPS trip distance, maximum speed, sampled average speed, and persistent lifetime odometer.
+- Detailed GPS status: fix state, satellites, HDOP, location, altitude, speed, and time.
+- GPS-course compass while moving at 1 km/h or more.
+- GPS-synchronised clock with Irish Summer Time adjustment and temperature readout.
+- Weather display for BME280 temperature, pressure, humidity, calculated barometric altitude, and trends.
+- Analog barometer from 980 to 1040 hPa.
+- Speed and GPS altitude history graphs covering the latest 10 minutes.
+- Dark and light display themes.
+- Physical buttons and capacitive touch-pad navigation.
 
-The main screen provides the primary riding information at a glance.
+## Pages
 
-- GPS-derived speed in km/h
-- Large central speed display
-- Circular speedometer gauge
-- Automatic gauge range
-- GPS satellite indicator
-- Distance/trip information
-- Temperature display
-- Digital clock
-- High-speed warning colours
+### Button 1 / Touch GPIO 2
 
-### Automatic Speedometer Range
+Short presses cycle through Main speedometer, Trip, GPS, Compass, Clock, and History. The next press from History returns to the main speedometer.
 
-The speedometer has two operating ranges.
+Hold the physical Button 1 for 3 seconds to reset the current trip. It resets trip distance, maximum speed, and average-speed totals. The lifetime odometer is not reset.
 
-#### Normal Mode
+### Button 2 / Touch GPIO 3
 
-Maximum speed:
+Short presses cycle through Clock, Weather, Barometer, and System.
 
-**40 km/h**
+Hold the physical Button 2 for 3 seconds to switch between dark and light themes.
 
-Gauge markings:
+## Main Speedometer
 
-**2 km/h**
+The main page displays current GPS speed, a colour-coded gauge, GPS quality and satellite count, current trip distance, calibrated BME280 temperature, a GPS-based altitude direction arrow, and GPS-derived local time.
 
-Numbered markings:
+The altitude arrow compares valid GPS altitude samples 10 seconds apart. It indicates rising or falling only when the change exceeds 2 m; otherwise it shows level.
 
-**10 km/h**
+## Trip And Odometer
 
-#### High-Speed Mode
+Trip distance is calculated from accepted GPS position changes between 0.5 m and 100 m. The Trip page shows distance, current speed, maximum speed, average speed, satellite count, and `ODO`.
 
-When speed exceeds approximately 35 km/h, the gauge automatically changes to:
+Trip measurements and the odometer are stored in ESP32 NVS every 30 seconds and restored after reset or power cycling. The odometer increases from the same validated GPS distance segments as trip distance and survives a Button 1 trip reset. It currently displays whole kilometers.
 
-**120 km/h**
+## GPS And Compass
 
-Gauge markings:
+GPS data uses `HardwareSerial(1)` at 9600 baud. The GPS page provides fix status, satellites, latitude, longitude, altitude, HDOP, time, and speed.
 
-**5 km/h**
+The compass rotates from GPS course, so it needs a valid GPS fix and motion of at least 1 km/h. It is not a magnetic compass and cannot provide a reliable heading while stationary.
 
-Numbered markings:
+GPS time is converted to Irish local time, including daylight-saving transitions.
 
-**20 km/h**
+## Weather And Altitude
 
-This prevents the display from becoming difficult to read at higher speeds.
+The BME280 is sampled every 10 seconds. The Weather page shows temperature, pressure, humidity, and pressure-derived altitude. Temperature is adjusted by `TEMP_CALIBRATION_OFFSET` to compensate for enclosure and display heating.
 
-### Speed Warning Colours
+At boot, barometric altitude uses the fallback `seaLevelPressureHpa` value of 1020.0 hPa. Once a strong GPS signal is acquired, the firmware recalibrates this reference exactly once using current GPS altitude and measured BME280 pressure. Calibration requires valid GPS location and altitude, valid HDOP of 1.5 or lower, and an available BME280 pressure reading.
 
-The speed indicator changes colour according to speed.
+The calibrated reference remains fixed until the next restart. It is printed to the serial monitor as `Sea-level pressure calibrated: ...`.
 
-Normal range:
+## History Graphs
 
-- Cyan — normal
-- Yellow — approximately 25 km/h and above
-- Red — approximately 35 km/h and above
+The History page retains 60 samples in RAM, captured every 10 seconds. It shows separate graphs for speed and valid GPS altitude, covering the latest 10 minutes. The newest point is at the right of each graph.
 
-High-speed range:
+History is not saved to flash and clears after a restart.
 
-- Cyan — normal
-- Yellow — approximately 70 km/h and above
-- Red — approximately 100 km/h and above
+## Hardware And Pinout
 
----
+### GC9A01 Display
 
-# Display Pages
-
-The project uses two physical buttons to navigate through the different pages.
-
-## Button 1
-
-Button 1 cycles through:
-
-1. Main
-2. Trip
-3. GPS
-4. Compass
-5. Clock
-
-## Button 2
-
-Button 2 cycles through:
-
-1. Clock
-2. Weather
-3. Barometer
-4. System
-
-The button system is designed so that both buttons can be used independently to access different information.
-
----
-
-## Main Page
-
-The main page is designed as the primary riding screen.
-
-It contains:
-
-- Circular speed gauge
-- Large speed readout
-- `KM/H` indicator
-- GPS status
-- Satellite information
-- Distance
-- Temperature
-- Clock
-
-The display is designed to resemble a small motorcycle/bike dashboard rather than a conventional rectangular GPS display.
-
----
-
-## Trip Page
-
-The trip page provides information relating to the current journey.
-
-The GPS is used to calculate travelled distance.
-
-Distance is calculated using GPS coordinates and the TinyGPSPlus distance calculation functions.
-
----
-
-## GPS Page
-
-The GPS information page displays GPS-related information including:
-
-- GPS fix status
-- Number of satellites
-- HDOP
-- GPS information
-- Current GPS-derived speed
-
-The GPS indicator changes according to GPS status/quality.
-
-### GPS Status
-
-The dashboard uses different indicator states to provide a quick visual indication of GPS reception.
-
----
-
-## Compass Page
-
-The compass page is reserved for directional/navigation information.
-
-The display layout is designed so additional compass functionality can be incorporated as the project develops.
-
----
-
-## Clock Page
-
-The clock uses GPS date and time information.
-
-The project includes Irish Summer Time handling so the displayed time can be adjusted appropriately for Irish daylight-saving time.
-
-GPS time is used rather than relying solely on the ESP32 internal clock.
-
----
-
-# Weather Page
-
-A **BME280** sensor provides environmental information.
-
-The weather page displays:
-
-- Temperature
-- Humidity
-- Atmospheric pressure
-- Trend information
-
-Measurements are updated periodically rather than continuously to provide stable readings.
-
-The current configuration updates the environmental readings every:
-
-**10 seconds**
-
----
-
-## Weather Trends
-
-The project monitors changes in:
-
-### Temperature
-
-Trend threshold:
-
-**0.2°C**
-
-### Pressure
-
-Trend threshold:
-
-**1.0 hPa**
-
-### Humidity
-
-Trend threshold:
-
-**2%**
-
-The display can indicate whether a value is:
-
-- Rising
-- Falling
-- Remaining approximately stable
-
-The trend is calculated from previous measurements rather than simply showing the current value.
-
----
-
-# Barometer Page
-
-The BME280 atmospheric pressure sensor is also used as a barometer.
-
-Current gauge range:
-
-**980–1040 hPa**
-
-The barometer uses a circular gauge similar to the main speedometer.
-
-This provides a quick indication of changes in atmospheric pressure while riding.
-
----
-
-# System Page
-
-The system page provides information about the ESP32-S3 and the current operating state.
-
-It is intended as a diagnostic/information page and can be expanded with additional system information as the project develops.
-
----
-
-# Light Theme
-
-A light display theme has been added to the project.
-
-The theme can be activated using a long press of **Button 2**.
-
-This allows the dashboard to be switched between the normal dark display and a lighter display suitable for different lighting conditions.
-
----
-
-# Touch / Capacitive Input
-
-The ESP32-S3 provides capacitive touch-capable GPIOs.
-
-The project has also been experimenting with using:
-
-- GPIO 2
-- GPIO 3
-
-as capacitive touch inputs.
-
-The intention is to allow touch activation of the same functions as the physical buttons while retaining the physical button functionality.
-
-Touch sensitivity is based on the ESP32-S3 capacitive touch readings.
-
----
-
-# Hardware
-
-## Required Parts
-
-### 1. ESP32-S3-N16R8
-
-An ESP32-S3 development board is the main controller.
-
-Recommended configuration:
-
-- ESP32-S3
-- USB programming connection
-- 3.3V GPIO
-- Sufficient flash/RAM for the project
-
-The project has been developed using:
-
-**ESP32-S3-N16R8**
-
----
-
-### 2. 1.28" Round TFT Display
-
-Display:
-
-**1.28" round TFT**
-
-Controller:
-
-**GC9A01**
-
-Resolution:
-
-**240 × 240 pixels**
-
-The display uses SPI.
-
----
-
-### 3. GPS Module
-
-GPS:
-
-**GY-GPS6MV2**
-
-The module provides:
-
-- Latitude
-- Longitude
-- Speed
-- Date
-- Time
-- Satellites
-- HDOP
-- GPS fix
-
-The GPS is connected to one of the ESP32-S3 hardware UARTs.
-
----
-
-### 4. BME280
-
-Environmental sensor:
-
-**BME280**
-
-Provides:
-
-- Temperature
-- Humidity
-- Atmospheric pressure
-
-The sensor uses I²C.
-
----
-
-### 5. Push Buttons
-
-Two physical push buttons are used for dashboard navigation.
-
-Additional capacitive touch inputs are being developed using the ESP32-S3 touch-capable GPIOs.
-
----
-
-# Pinout
-
-## TFT Display
-
-| Display | ESP32-S3 |
-|---|---:|
-| SCLK / SCL | GPIO 12 |
-| MOSI / SDA | GPIO 11 |
-| MISO | Not used |
+| Signal | ESP32-S3 pin |
+| --- | --- |
+| SCLK | GPIO 12 |
+| MOSI | GPIO 11 |
 | DC | GPIO 9 |
 | CS | GPIO 10 |
 | RST | GPIO 8 |
-| BL | GPIO 7 |
+| Backlight | GPIO 7 |
+
+The display uses SPI2 and is configured for 240 x 240 pixels.
+
+### GPS Receiver
+
+| GPS signal | ESP32-S3 pin |
+| --- | --- |
+| GPS TX | GPIO 18 (ESP32 RX) |
+| GPS RX | GPIO 17 (ESP32 TX) |
 | VCC | 3.3V |
 | GND | GND |
 
-The display is configured for SPI using the ESP32-S3 SPI2 interface.
+Connect TX to RX and RX to TX as shown.
 
----
+### BME280
 
-# GPS Pinout
-
-| GPS | ESP32-S3 |
-|---|---:|
+| BME280 signal | ESP32-S3 pin |
+| --- | --- |
+| SDA | GPIO 5 |
+| SCL | GPIO 4 |
 | VCC | 3.3V |
 | GND | GND |
-| TX | GPIO 17 |
-| RX | GPIO 18 |
 
-The GPS uses:
+The firmware attempts BME280 I2C addresses `0x76` and `0x77`.
 
-**HardwareSerial(1)**
+### Controls
 
-The ESP32-S3 receives GPS data through the GPS UART.
+| Control | ESP32-S3 pin |
+| --- | --- |
+| Physical Button 1 | GPIO 1 |
+| Physical Button 2 | GPIO 20 |
+| Touch pad 1 | GPIO 2 |
+| Touch pad 2 | GPIO 3 |
 
-### Important
+The physical buttons use `INPUT_PULLUP` and should pull their GPIO low when pressed.
 
-GPS module TX connects to ESP32 RX.
+Touch pads are calibrated at startup. Keep both pads untouched during startup while the firmware averages 40 readings for each baseline. A deviation of 5000 counts triggers a touch.
 
-GPS module RX connects to ESP32 TX.
+## Build And Upload
 
-Therefore:
+Install PlatformIO, connect the ESP32-S3, and run from the project directory:
 
-```text
-GPS TX → ESP32 GPIO 17
-GPS RX → ESP32 GPIO 18
+```sh
+platformio run
+platformio run --target upload
+platformio device monitor --baud 115200
+```
+
+The PlatformIO environment is `esp32-s3-devkitc-1`. Dependencies are LovyanGFX, TinyGPSPlus, Adafruit Unified Sensor, and Adafruit BME280 Library.
