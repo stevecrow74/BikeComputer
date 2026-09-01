@@ -2,9 +2,9 @@
 #include <LovyanGFX.hpp>
 #include <TinyGPSPlus.h>
 #include <math.h>
-#include <esp_sleep.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
+#include <Preferences.h>
 
 // ============================================================
 // DISPLAY
@@ -99,7 +99,7 @@ LGFX_Sprite compassSprite(&tft);
 // A 5000-count deviation is used as the touch trigger.
 // This detects both upward and downward changes and avoids
 // relying on the direction of the touch signal.
-const uint16_t TOUCH_DEVIATION_THRESHOLD = 5000;
+const uint16_t TOUCH_DEVIATION_THRESHOLD = 2000;
 const int TOUCH_CALIBRATION_SAMPLES = 40;
 
 uint16_t touchBaseline1 = 0;
@@ -112,15 +112,15 @@ bool touchButton1Handled = false;
 bool touchButton2Handled = false;
 
 // BME280
-#define BME_SDA 4
-#define BME_SCL 5
+#define BME_SDA 5
+#define BME_SCL 4
 
 // ============================================================
 // GPS
 // ============================================================
 
-#define GPS_RX_PIN 17
-#define GPS_TX_PIN 18
+#define GPS_RX_PIN 18
+#define GPS_TX_PIN 17
 
 HardwareSerial GPS(1);
 TinyGPSPlus gps;
@@ -157,10 +157,132 @@ const unsigned long WEATHER_UPDATE_INTERVAL = 10000;
 const float TEMP_TREND_THRESHOLD = 0.2;
 const float PRESSURE_TREND_THRESHOLD = 1.0;
 const float HUMIDITY_TREND_THRESHOLD = 2.0;
+float seaLevelPressureHpa = 1020.0f;
+bool seaLevelPressureCalibrated = false;
+
+const float GPS_CALIBRATION_HDOP = 1.5f;
+const float ALTITUDE_TREND_THRESHOLD_METERS = 2.0;
 
 int temperatureTrend = 0;
 int pressureTrend = 0;
 int humidityTrend = 0;
+int altitudeTrend = 0;
+
+float previousGPSAltitude = 0.0f;
+bool havePreviousGPSAltitude = false;
+unsigned long lastGPSAltitudeTrendUpdate = 0;
+
+const unsigned long GPS_ALTITUDE_TREND_INTERVAL = 10000;
+
+int calculateTrend(
+    float current,
+    float previous,
+    float threshold
+);
+
+float pressureAltitudeMeters()
+{
+    if (pressureHpa <= 0.0f)
+        return 0.0f;
+
+    return 44330.0f *
+        (1.0f - pow(
+            pressureHpa /
+            seaLevelPressureHpa,
+            0.1903f
+        ));
+}
+
+void calibrateSeaLevelPressure()
+{
+    if (
+        seaLevelPressureCalibrated ||
+        !bmeAvailable ||
+        pressureHpa <= 0.0f ||
+        !gps.location.isValid() ||
+        !gps.altitude.isValid() ||
+        !gps.hdop.isValid() ||
+        gps.hdop.hdop() >
+        GPS_CALIBRATION_HDOP)
+    {
+        return;
+    }
+
+    float altitudeMeters =
+        gps.altitude.meters();
+
+    float pressureRatio =
+        1.0f -
+        (altitudeMeters / 44330.0f);
+
+    if (pressureRatio <= 0.0f)
+        return;
+
+    seaLevelPressureHpa =
+        pressureHpa /
+        pow(pressureRatio, 5.255f);
+
+    seaLevelPressureCalibrated =
+        true;
+
+    Serial.print(
+        "Sea-level pressure calibrated: "
+    );
+
+    Serial.println(
+        seaLevelPressureHpa,
+        1
+    );
+}
+
+void updateAltitudeTrend()
+{
+    if (!gps.altitude.isValid())
+        return;
+
+    unsigned long now =
+        millis();
+
+    float currentAltitude =
+        gps.altitude.meters();
+
+    if (!havePreviousGPSAltitude)
+    {
+        previousGPSAltitude =
+            currentAltitude;
+
+        havePreviousGPSAltitude =
+            true;
+
+        lastGPSAltitudeTrendUpdate =
+            now;
+
+        altitudeTrend = 0;
+
+        return;
+    }
+
+    if (
+        now -
+        lastGPSAltitudeTrendUpdate <
+        GPS_ALTITUDE_TREND_INTERVAL)
+    {
+        return;
+    }
+
+    altitudeTrend =
+        calculateTrend(
+            currentAltitude,
+            previousGPSAltitude,
+            ALTITUDE_TREND_THRESHOLD_METERS
+        );
+
+    previousGPSAltitude =
+        currentAltitude;
+
+    lastGPSAltitudeTrendUpdate =
+        now;
+}
 
 // ============================================================
 // SCREEN
@@ -168,6 +290,12 @@ int humidityTrend = 0;
 
 const int CX = 120;
 const int CY = 120;
+
+void drawTrendArrow(
+    int x,
+    int y,
+    int trend
+);
 
 // ============================================================
 // THEME
@@ -224,6 +352,7 @@ uint16_t themeLine()
 // 2 GPS
 // 3 COMPASS
 // 4 CLOCK
+// 8 HISTORY
 //
 // Button 2:
 // 4 CLOCK
@@ -246,10 +375,10 @@ unsigned long lastButton1Change = 0;
 unsigned long button1PressStart = 0;
 
 bool button1Held = false;
-bool sleepTriggered = false;
+bool tripResetTriggered = false;
 
 const unsigned long BUTTON_DEBOUNCE = 180;
-const unsigned long SLEEP_HOLD_TIME = 3000;
+const unsigned long TRIP_RESET_HOLD_TIME = 3000;
 
 // ============================================================
 // BUTTON 2
@@ -277,6 +406,7 @@ const unsigned long INFO_PAGE_TIMEOUT = 10000;
 float speedKmh = 0.0;
 
 double distanceKm = 0.0;
+double odometerKm = 0.0;
 
 double lastLat = 0.0;
 double lastLon = 0.0;
@@ -290,6 +420,57 @@ double hdop = 99.9;
 bool gpsFix = false;
 
 // ============================================================
+// HISTORY GRAPH
+// ============================================================
+
+const int HISTORY_SAMPLE_COUNT = 60;
+const unsigned long HISTORY_SAMPLE_INTERVAL = 10000;
+
+float speedHistory[HISTORY_SAMPLE_COUNT] = {};
+float altitudeHistory[HISTORY_SAMPLE_COUNT] = {};
+bool altitudeHistoryValid[HISTORY_SAMPLE_COUNT] = {};
+
+int historySampleCount = 0;
+int historyWriteIndex = 0;
+
+unsigned long lastHistorySample = 0;
+unsigned long lastHistoryPageUpdate = 0;
+
+void recordHistorySample()
+{
+    unsigned long now = millis();
+
+    if (
+        now -
+        lastHistorySample <
+        HISTORY_SAMPLE_INTERVAL)
+    {
+        return;
+    }
+
+    lastHistorySample = now;
+
+    speedHistory[historyWriteIndex] =
+        speedKmh;
+
+    altitudeHistoryValid[historyWriteIndex] =
+        gps.altitude.isValid();
+
+    if (altitudeHistoryValid[historyWriteIndex])
+    {
+        altitudeHistory[historyWriteIndex] =
+            gps.altitude.meters();
+    }
+
+    historyWriteIndex =
+        (historyWriteIndex + 1) %
+        HISTORY_SAMPLE_COUNT;
+
+    if (historySampleCount < HISTORY_SAMPLE_COUNT)
+        historySampleCount++;
+}
+
+// ============================================================
 // TRIP DATA
 // ============================================================
 
@@ -298,6 +479,105 @@ float averageSpeed = 0.0;
 
 double speedSum = 0.0;
 unsigned long speedSamples = 0;
+
+Preferences tripStorage;
+
+const unsigned long TRIP_SAVE_INTERVAL = 30000;
+
+unsigned long lastTripSave = 0;
+
+void loadTripData()
+{
+    tripStorage.begin(
+        "trip",
+        true
+    );
+
+    distanceKm =
+        tripStorage.getDouble(
+            "distance",
+            0.0
+        );
+
+    odometerKm =
+        tripStorage.getDouble(
+            "odometer",
+            0.0
+        );
+
+    maximumSpeed =
+        tripStorage.getFloat(
+            "maxSpeed",
+            0.0f
+        );
+
+    speedSum =
+        tripStorage.getDouble(
+            "speedSum",
+            0.0
+        );
+
+    speedSamples =
+        tripStorage.getULong(
+            "samples",
+            0
+        );
+
+    tripStorage.end();
+
+    if (speedSamples > 0)
+    {
+        averageSpeed =
+            speedSum /
+            speedSamples;
+    }
+}
+
+void saveTripData()
+{
+    tripStorage.begin(
+        "trip",
+        false
+    );
+
+    tripStorage.putDouble(
+        "distance",
+        distanceKm
+    );
+
+    tripStorage.putDouble(
+        "odometer",
+        odometerKm
+    );
+
+    tripStorage.putFloat(
+        "maxSpeed",
+        maximumSpeed
+    );
+
+    tripStorage.putDouble(
+        "speedSum",
+        speedSum
+    );
+
+    tripStorage.putULong(
+        "samples",
+        speedSamples
+    );
+
+    tripStorage.end();
+}
+
+void resetTripData()
+{
+    distanceKm = 0.0;
+    maximumSpeed = 0.0f;
+    averageSpeed = 0.0f;
+    speedSum = 0.0;
+    speedSamples = 0;
+
+    saveTripData();
+}
 
 // ============================================================
 // GAUGE
@@ -480,7 +760,7 @@ void drawGauge()
             else if (speed >= 70)
                 colour = TFT_YELLOW;
             else
-                colour = TFT_CYAN;
+                colour = TFT_GREEN;
         }
         else
         {
@@ -489,7 +769,7 @@ void drawGauge()
             else if (speed >= 25)
                 colour = TFT_YELLOW;
             else
-                colour = TFT_CYAN;
+                colour = TFT_GREEN;
         }
 
         drawTick(
@@ -550,7 +830,7 @@ uint16_t speedBarColour(float speed)
         if (speed >= 70)
             return TFT_YELLOW;
 
-        return TFT_CYAN;
+        return TFT_GREEN;
     }
 
     if (speed >= 35)
@@ -559,7 +839,7 @@ uint16_t speedBarColour(float speed)
     if (speed >= 25)
         return TFT_YELLOW;
 
-    return TFT_CYAN;
+    return TFT_GREEN;
 }
 
 // ============================================================
@@ -1023,6 +1303,14 @@ void updateMainTemperature()
         themeBackground()
     );
 
+    tft.fillRect(
+        171,
+        147,
+        19,
+        19,
+        themeBackground()
+    );
+
     if (!bmeAvailable)
         return;
 
@@ -1079,6 +1367,12 @@ void updateMainTemperature()
         degreeX + 9,
         157
     );
+
+    drawTrendArrow(
+        180,
+        156,
+        altitudeTrend
+    );
 }
 
 // ============================================================
@@ -1133,6 +1427,231 @@ void updateMainDistance()
     );
 
     updateMainTemperature();
+}
+
+// ============================================================
+// HISTORY PAGE
+// ============================================================
+
+void drawHistoryGraph(
+    int top,
+    int height,
+    const float* values,
+    const bool* valid,
+    float minimum,
+    float maximum,
+    uint16_t colour
+)
+{
+    const int left = 22;
+    const int right = 222;
+    const int bottom = top + height;
+
+    tft.drawRect(
+        left,
+        top,
+        right - left,
+        height,
+        themeLine()
+    );
+
+    if (historySampleCount < 2)
+        return;
+
+    int firstIndex =
+        (historyWriteIndex - historySampleCount +
+         HISTORY_SAMPLE_COUNT) %
+        HISTORY_SAMPLE_COUNT;
+
+    bool havePreviousPoint = false;
+    int previousX = 0;
+    int previousY = 0;
+
+    for (int sample = 0; sample < historySampleCount; sample++)
+    {
+        int index =
+            (firstIndex + sample) %
+            HISTORY_SAMPLE_COUNT;
+
+        if (valid != nullptr && !valid[index])
+        {
+            havePreviousPoint = false;
+            continue;
+        }
+
+        float fraction =
+            (values[index] - minimum) /
+            (maximum - minimum);
+
+        fraction = constrain(
+            fraction,
+            0.0f,
+            1.0f
+        );
+
+        int x = right - 1 -
+            ((right - left - 1) *
+             (historySampleCount - 1 - sample)) /
+            (HISTORY_SAMPLE_COUNT - 1);
+
+        int y = bottom - 1 -
+            (int)((height - 2) * fraction);
+
+        if (havePreviousPoint)
+        {
+            tft.drawLine(
+                previousX,
+                previousY,
+                x,
+                y,
+                colour
+            );
+        }
+
+        previousX = x;
+        previousY = y;
+        havePreviousPoint = true;
+    }
+}
+
+void drawHistoryPage()
+{
+    tft.fillScreen(
+        themeBackground()
+    );
+
+    tft.setTextDatum(
+        middle_center
+    );
+
+    tft.setFont(
+        &fonts::Font4
+    );
+
+    tft.setTextColor(
+        TFT_GREEN
+    );
+
+    tft.drawString(
+        "HISTORY",
+        CX,
+        16
+    );
+
+    tft.setFont(
+        &fonts::Font2
+    );
+
+    tft.setTextColor(
+        themeSecondaryText()
+    );
+
+    tft.drawString(
+        "SPEED KM/H",
+        CX,
+        36
+    );
+
+    float maximumSpeedHistory = 10.0f;
+
+    for (int sample = 0; sample < historySampleCount; sample++)
+    {
+        int index =
+            (historyWriteIndex - historySampleCount + sample +
+             HISTORY_SAMPLE_COUNT) %
+            HISTORY_SAMPLE_COUNT;
+
+        if (speedHistory[index] > maximumSpeedHistory)
+            maximumSpeedHistory =
+                speedHistory[index];
+    }
+
+    drawHistoryGraph(
+        46,
+        65,
+        speedHistory,
+        nullptr,
+        0.0f,
+        maximumSpeedHistory,
+        TFT_GREEN
+    );
+
+    tft.setTextColor(
+        themeSecondaryText()
+    );
+
+    tft.drawString(
+        "GPS ALTITUDE M",
+        CX,
+        132
+    );
+
+    float minimumAltitude = 0.0f;
+    float maximumAltitude = 1.0f;
+    bool haveAltitude = false;
+
+    for (int sample = 0; sample < historySampleCount; sample++)
+    {
+        int index =
+            (historyWriteIndex - historySampleCount + sample +
+             HISTORY_SAMPLE_COUNT) %
+            HISTORY_SAMPLE_COUNT;
+
+        if (!altitudeHistoryValid[index])
+            continue;
+
+        float altitude =
+            altitudeHistory[index];
+
+        if (!haveAltitude)
+        {
+            minimumAltitude = altitude;
+            maximumAltitude = altitude;
+            haveAltitude = true;
+        }
+        else
+        {
+            minimumAltitude = min(
+                minimumAltitude,
+                altitude
+            );
+
+            maximumAltitude = max(
+                maximumAltitude,
+                altitude
+            );
+        }
+    }
+
+    if (maximumAltitude - minimumAltitude < 10.0f)
+    {
+        float midpoint =
+            (maximumAltitude + minimumAltitude) /
+            2.0f;
+
+        minimumAltitude = midpoint - 5.0f;
+        maximumAltitude = midpoint + 5.0f;
+    }
+
+    drawHistoryGraph(
+        142,
+        65,
+        altitudeHistory,
+        altitudeHistoryValid,
+        minimumAltitude,
+        maximumAltitude,
+        TFT_GREEN
+    );
+
+    tft.setTextColor(
+        themeSecondaryText()
+    );
+
+    tft.drawString(
+        "10 MINUTES",
+        CX,
+        224
+    );
 }
 
 // ============================================================
@@ -1419,6 +1938,10 @@ void readGPS()
         hdop =
             gps.hdop.hdop();
 
+    calibrateSeaLevelPressure();
+
+    updateAltitudeTrend();
+
     if (gps.location.isUpdated())
     {
         double lat =
@@ -1442,6 +1965,9 @@ void readGPS()
                 segmentDistance <= 100.0)
             {
                 distanceKm +=
+                    segmentDistance / 1000.0;
+
+                odometerKm +=
                     segmentDistance / 1000.0;
             }
         }
@@ -1606,6 +2132,7 @@ void readWeather()
             previousHumidity,
             HUMIDITY_TREND_THRESHOLD
         );
+
 }
 
 // ============================================================
@@ -1739,25 +2266,33 @@ void updateWeatherPage()
 
     tft.fillRect(
         80,
-        48,
+        38,
         132,
-        34,
+        24,
         themeBackground()
     );
 
     tft.fillRect(
         80,
-        98,
+        78,
         132,
-        34,
+        24,
         themeBackground()
     );
 
     tft.fillRect(
         80,
-        148,
+        118,
         132,
-        34,
+        24,
+        themeBackground()
+    );
+
+    tft.fillRect(
+        80,
+        158,
+        132,
+        24,
         themeBackground()
     );
 
@@ -1783,12 +2318,12 @@ void updateWeatherPage()
     tft.drawString(
         text,
         137,
-        65
+        50
     );
 
     drawTrendArrow(
         205,
-        65,
+        50,
         temperatureTrend
     );
 
@@ -1806,12 +2341,12 @@ void updateWeatherPage()
     tft.drawString(
         text,
         137,
-        115
+        90
     );
 
     drawTrendArrow(
         205,
-        115,
+        90,
         pressureTrend
     );
 
@@ -1825,13 +2360,26 @@ void updateWeatherPage()
     tft.drawString(
         text,
         137,
-        165
+        130
     );
 
     drawTrendArrow(
         205,
-        165,
+        130,
         humidityTrend
+    );
+
+    snprintf(
+        text,
+        sizeof(text),
+        "%.0f m",
+        pressureAltitudeMeters()
+    );
+
+    tft.drawString(
+        text,
+        137,
+        170
     );
 
     tft.setFont(
@@ -1868,7 +2416,7 @@ void drawWeatherPage()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -1888,19 +2436,25 @@ void drawWeatherPage()
     tft.drawString(
         "TEMP",
         45,
-        65
+        50
     );
 
     tft.drawString(
         "PRESSURE",
         55,
-        115
+        90
     );
 
     tft.drawString(
         "HUMIDITY",
         55,
-        165
+        130
+    );
+
+    tft.drawString(
+        "ALT",
+        45,
+        170
     );
 
     updateWeatherPage();
@@ -1967,7 +2521,7 @@ void drawTripPageStatic()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -1999,6 +2553,12 @@ void drawTripPageStatic()
     tft.drawString(
         "MAX",
         70,
+        153
+    );
+
+    tft.drawString(
+        "ODO",
+        CX,
         153
     );
 
@@ -2103,6 +2663,27 @@ void updateTripPage()
     );
 
     tft.fillRect(
+        95,
+        162,
+        50,
+        25,
+        themeBackground()
+    );
+
+    snprintf(
+        text,
+        sizeof(text),
+        "%.0f",
+        odometerKm
+    );
+
+    tft.drawString(
+        text,
+        CX,
+        176
+    );
+
+    tft.fillRect(
         140,
         162,
         60,
@@ -2168,7 +2749,7 @@ void drawGPSPageStatic()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -2632,7 +3213,7 @@ void drawClockSecondDot(
         x,
         y,
         4,
-        TFT_CYAN
+        TFT_GREEN
     );
 }
 
@@ -2728,6 +3309,37 @@ void drawClockTime()
         themeBackground()
     );
 
+    tft.fillRect(
+        65,
+        51,
+        110,
+        24,
+        themeBackground()
+    );
+
+    if (bmeAvailable)
+    {
+        char temperatureText[16];
+
+        snprintf(
+            temperatureText,
+            sizeof(temperatureText),
+            "%.1f C",
+            temperatureC
+        );
+
+        tft.setTextColor(
+            themeSecondaryText()
+        );
+
+        tft.drawString(
+            temperatureText,
+            CX,
+            65,
+            4
+        );
+    }
+
     tft.setTextColor(
         themeText()
     );
@@ -2801,7 +3413,7 @@ void drawClockDate()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -3246,7 +3858,7 @@ void drawCompassPage()
         );
 
         compassSprite.setTextColor(
-            TFT_CYAN
+            TFT_GREEN
         );
 
         compassSprite.drawString(
@@ -3510,7 +4122,7 @@ void drawBarometerFace()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -3615,7 +4227,7 @@ void drawBarometerFace()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.setFont(
@@ -3679,7 +4291,7 @@ void drawBarometerFace()
 
     drawBarometerNeedle(
         pressureHpa,
-        TFT_CYAN
+        TFT_GREEN
     );
 
     barometerStarted =
@@ -3739,7 +4351,7 @@ void updateBarometerPage()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -3768,7 +4380,7 @@ void updateBarometerPage()
     tft.drawString(
         tempText,
         BARO_CX,
-        120
+        200
     );
 
     tft.setFont(
@@ -3869,7 +4481,7 @@ void drawSystemPage()
     );
 
     tft.setTextColor(
-        TFT_CYAN
+        TFT_GREEN
     );
 
     tft.drawString(
@@ -3887,7 +4499,7 @@ void drawSystemPage()
     );
 
     tft.drawString(
-        "BATTERY",
+        "--",
         55,
         65
     );
@@ -3906,13 +4518,13 @@ void drawSystemPage()
 
     tft.drawString(
         "HDOP",
-        55,
+        65,
         185
     );
 
     tft.drawString(
-        "UPTIME",
-        55,
+        "UP",
+        75,
         215
     );
 
@@ -4093,51 +4705,6 @@ void updateSystemPage()
 }
 
 // ============================================================
-// ENTER DEEP SLEEP
-// ============================================================
-
-void enterDeepSleep()
-{
-    Serial.println();
-    Serial.println(
-        "3 second button hold detected"
-    );
-
-    Serial.println(
-        "Entering deep sleep..."
-    );
-
-    digitalWrite(
-        TFT_BL,
-        LOW
-    );
-
-    delay(200);
-
-    while (
-        digitalRead(BUTTON_1) ==
-        LOW)
-    {
-        delay(10);
-    }
-
-    delay(100);
-
-    esp_sleep_enable_ext0_wakeup(
-        (gpio_num_t)BUTTON_1,
-        0
-    );
-
-    Serial.println(
-        "Sleeping now."
-    );
-
-    Serial.flush();
-
-    esp_deep_sleep_start();
-}
-
-// ============================================================
 // TOGGLE LIGHT THEME
 // ============================================================
 
@@ -4229,6 +4796,10 @@ void drawCurrentPage()
     else if (currentPage == 7)
     {
         drawSystemPage();
+    }
+    else if (currentPage == 8)
+    {
+        drawHistoryPage();
     }
 
     previousPage =
@@ -4335,25 +4906,26 @@ void checkButton1()
         {
             button1PressStart = now;
             button1Held = true;
-            sleepTriggered = false;
+            tripResetTriggered = false;
 
             lastButton1Change = now;
         }
     }
 
-    // Physical Button 1 long press = deep sleep
+    // Physical Button 1 long press = reset trip
     if (
         physicalState == LOW &&
         button1Held &&
-        !sleepTriggered)
+        !tripResetTriggered)
     {
         if (
             now -
             button1PressStart >=
-            SLEEP_HOLD_TIME)
+            TRIP_RESET_HOLD_TIME)
         {
-            sleepTriggered = true;
-            enterDeepSleep();
+            tripResetTriggered = true;
+            resetTripData();
+            pageNeedsRedraw = true;
         }
     }
 
@@ -4364,7 +4936,7 @@ void checkButton1()
     {
         if (
             button1Held &&
-            !sleepTriggered)
+            !tripResetTriggered)
         {
             unsigned long duration =
                 now -
@@ -4372,7 +4944,7 @@ void checkButton1()
 
             if (
                 duration <
-                SLEEP_HOLD_TIME)
+                TRIP_RESET_HOLD_TIME)
             {
                 if (currentPage == 0)
                     currentPage = 1;
@@ -4383,6 +4955,8 @@ void checkButton1()
                 else if (currentPage == 3)
                     currentPage = 4;
                 else if (currentPage == 4)
+                    currentPage = 8;
+                else if (currentPage == 8)
                     currentPage = 0;
                 else
                     currentPage = 0;
@@ -4393,6 +4967,7 @@ void checkButton1()
         }
 
         button1Held = false;
+        tripResetTriggered = false;
     }
 
     lastButton1State =
@@ -4427,6 +5002,8 @@ void checkButton1()
         else if (currentPage == 3)
             currentPage = 4;
         else if (currentPage == 4)
+            currentPage = 8;
+        else if (currentPage == 8)
             currentPage = 0;
         else
             currentPage = 0;
@@ -4647,7 +5224,7 @@ void setup()
     tft.init();
 
     tft.setRotation(
-        0
+        2
     );
 
     tft.setTextWrap(
@@ -4755,6 +5332,8 @@ void setup()
     currentPage =
         0;
 
+    loadTripData();
+
     pageEnteredTime =
         millis();
 
@@ -4783,6 +5362,8 @@ void loop()
     // ========================================================
 
     readGPS();
+
+    recordHistorySample();
 
     // ========================================================
     // BME280
@@ -4819,6 +5400,17 @@ void loop()
             now;
 
         updateAverageSpeed();
+    }
+
+    if (
+        now -
+        lastTripSave >=
+        TRIP_SAVE_INTERVAL)
+    {
+        lastTripSave =
+            now;
+
+        saveTripData();
     }
 
     // ========================================================
@@ -5016,6 +5608,24 @@ void loop()
                 now;
 
             updateSystemPage();
+        }
+    }
+
+    // ========================================================
+    // HISTORY PAGE
+    // ========================================================
+
+    else if (currentPage == 8)
+    {
+        if (
+            now -
+            lastHistoryPageUpdate >=
+            1000)
+        {
+            lastHistoryPageUpdate =
+                now;
+
+            drawHistoryPage();
         }
     }
 
