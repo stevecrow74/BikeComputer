@@ -301,10 +301,14 @@ void drawTrendArrow(
 // THEME
 // ============================================================
 
-// false = dark
-// true  = light
+enum class DisplayTheme
+{
+    Dark,
+    Light,
+    Night
+};
 
-bool lightTheme = false;
+DisplayTheme displayTheme = DisplayTheme::Dark;
 
 const unsigned long THEME_HOLD_TIME = 3000;
 
@@ -316,28 +320,37 @@ bool themeTriggered = false;
 
 uint16_t themeBackground()
 {
-    return lightTheme
+    return displayTheme == DisplayTheme::Light
         ? TFT_WHITE
         : TFT_BLACK;
 }
 
 uint16_t themeText()
 {
-    return lightTheme
+    if (displayTheme == DisplayTheme::Night)
+        return 0xB000;
+
+    return displayTheme == DisplayTheme::Light
         ? TFT_BLACK
         : TFT_WHITE;
 }
 
 uint16_t themeSecondaryText()
 {
-    return lightTheme
+    if (displayTheme == DisplayTheme::Night)
+        return 0x7000;
+
+    return displayTheme == DisplayTheme::Light
         ? TFT_DARKGREY
         : TFT_LIGHTGREY;
 }
 
 uint16_t themeLine()
 {
-    return lightTheme
+    if (displayTheme == DisplayTheme::Night)
+        return 0x4800;
+
+    return displayTheme == DisplayTheme::Light
         ? TFT_LIGHTGREY
         : TFT_DARKGREY;
 }
@@ -418,8 +431,9 @@ void showSplashScreen()
 // 1 TRIP
 // 2 GPS
 // 3 COMPASS
-// 4 CLOCK
 // 8 HISTORY
+// 4 CLOCK
+
 //
 // Button 2:
 // 4 CLOCK
@@ -1267,14 +1281,22 @@ void drawStaticScreen()
         CX,
         CY,
         70,
-        lightTheme ? 0xC618 : 0x18C3
+        displayTheme == DisplayTheme::Night
+            ? 0x5000
+            : (displayTheme == DisplayTheme::Light
+                ? 0xC618
+                : 0x18C3)
     );
 
     tft.drawCircle(
         CX,
         CY,
         72,
-        lightTheme ? 0xE71C : 0x10A2
+        displayTheme == DisplayTheme::Night
+            ? 0x3000
+            : (displayTheme == DisplayTheme::Light
+                ? 0xE71C
+                : 0x10A2)
     );
 
     drawGauge();
@@ -1614,7 +1636,7 @@ void drawHistoryPage()
     );
 
     tft.drawString(
-        "SPEED KM/H",
+        "SPEED",
         CX,
         36
     );
@@ -1648,7 +1670,7 @@ void drawHistoryPage()
     );
 
     tft.drawString(
-        "GPS ALTITUDE M",
+        "ALTITUDE",
         CX,
         132
     );
@@ -4591,9 +4613,9 @@ void drawSystemPage()
     );
 
     tft.drawString(
-        "UP",
-        75,
-        215
+        "UPTIME",
+        55,
+        75
     );
 
     updateSystemPage();
@@ -4654,7 +4676,7 @@ void updateSystemPage()
 
     tft.fillRect(
         95,
-        203,
+        73,
         125,
         24,
         themeBackground()
@@ -4772,26 +4794,32 @@ void updateSystemPage()
 
     tft.drawString(
         text,
-        CX,
-        215
+        155,
+        75
     );
 }
 
 // ============================================================
-// TOGGLE LIGHT THEME
+// CYCLE DISPLAY THEME
 // ============================================================
 
-void toggleLightTheme()
+void cycleDisplayTheme()
 {
-    lightTheme =
-        !lightTheme;
+    if (displayTheme == DisplayTheme::Dark)
+        displayTheme = DisplayTheme::Light;
+    else if (displayTheme == DisplayTheme::Light)
+        displayTheme = DisplayTheme::Night;
+    else
+        displayTheme = DisplayTheme::Dark;
 
     Serial.print(
         "Display theme: "
     );
 
-    if (lightTheme)
+    if (displayTheme == DisplayTheme::Light)
         Serial.println("LIGHT");
+    else if (displayTheme == DisplayTheme::Night)
+        Serial.println("NIGHT");
     else
         Serial.println("DARK");
 
@@ -5118,7 +5146,7 @@ void checkButton2()
         }
     }
 
-    // Physical Button 2 long press = theme toggle
+    // Physical Button 2 long press = theme cycle
     if (
         physicalState == LOW &&
         button2Held &&
@@ -5130,7 +5158,7 @@ void checkButton2()
             THEME_HOLD_TIME)
         {
             themeTriggered = true;
-            toggleLightTheme();
+            cycleDisplayTheme();
         }
     }
 
