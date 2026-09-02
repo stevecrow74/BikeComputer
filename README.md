@@ -106,8 +106,8 @@ The firmware attempts BME280 I2C addresses `0x76` and `0x77`.
 | --- | --- |
 | Physical Button 1 | GPIO 1 |
 | Physical Button 2 | GPIO 20 |
-| Touch pad 1 | GPIO 2 |
-| Touch pad 2 | GPIO 3 |
+| Touch pad 1 | GPIO 13 |
+| Touch pad 2 | GPIO 14 |
 
 The physical buttons use `INPUT_PULLUP` and should pull their GPIO low when pressed.
 
