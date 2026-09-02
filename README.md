@@ -15,6 +15,12 @@ Firmware for a GPS bike computer based on an ESP32-S3, a 240 x 240 GC9A01 round 
 - Dark and light display themes.
 - Physical buttons and capacitive touch-pad navigation.
 
+A three-mode display theme
+
+Dark -> Light -> Night -> Dark
+
+Hold physical Button 2 for three seconds to change mode. Night mode uses a black background with subdued red primary text, darker red secondary text/lines, and red gauge rings to reduce glare while riding at night. The selected mode is also printed to the serial monitor.
+
 ## Pages
 
 ### Button 1 / Touch GPIO 2
