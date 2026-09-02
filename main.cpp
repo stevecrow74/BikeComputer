@@ -381,7 +381,17 @@ void showSplashScreen()
         CX,
         CY + 35
     );
-
+    tft.setFont(
+        &fonts::Font4
+    );
+    tft.setTextColor(
+        TFT_RED
+    );
+    tft.drawString(
+        "DON'T PANIC",
+        CX,
+        CY + 80
+    );
     tft.drawCircle(
         CX - 58,
         CY,
@@ -4561,11 +4571,6 @@ void drawSystemPage()
         themeSecondaryText()
     );
 
-    tft.drawString(
-        "--",
-        55,
-        65
-    );
 
     tft.drawString(
         "ESP TEMP",
@@ -4668,12 +4673,17 @@ void updateSystemPage()
     );
 
     // Battery
-    tft.drawString(
-        "--",
-        155,
-        65
+    tft.setTextColor(
+        TFT_RED
     );
-
+    tft.drawString(
+        "By Stevecrow74",
+        CX,
+        45
+    );
+  tft.setTextColor(
+        TFT_WHITE
+    );
     // ESP temperature
     float espTemp =
         getESPTemperature();
@@ -5016,10 +5026,10 @@ void checkButton1()
                 else if (currentPage == 2)
                     currentPage = 3;
                 else if (currentPage == 3)
-                    currentPage = 4;
-                else if (currentPage == 4)
                     currentPage = 8;
                 else if (currentPage == 8)
+                    currentPage = 4;
+                else if (currentPage == 4)
                     currentPage = 0;
                 else
                     currentPage = 0;
@@ -5063,10 +5073,10 @@ void checkButton1()
         else if (currentPage == 2)
             currentPage = 3;
         else if (currentPage == 3)
-            currentPage = 4;
-        else if (currentPage == 4)
             currentPage = 8;
         else if (currentPage == 8)
+            currentPage = 4;
+        else if (currentPage == 4)
             currentPage = 0;
         else
             currentPage = 0;
@@ -5276,7 +5286,7 @@ void setup()
     // --------------------------------------------------------
     // CAPACITIVE TOUCH
     // --------------------------------------------------------
-    // GPIO 2 and GPIO 3 are touch-capable on this ESP32-S3.
+    // GPIO 13 and GPIO 14 are touch-capable on this ESP32-S3.
     // Calibrate while the pads are untouched.
     calibrateTouch();
 
