@@ -14,8 +14,8 @@ Firmware for a GPS bike computer based on an ESP32-S3, a 240 x 240 GC9A01 round 
 - Speed and GPS altitude history graphs covering the latest 10 minutes.
 - Dark, light and night display themes.
 - Physical buttons and capacitive touch-pad navigation.
-- 
-##Display theme
+  
+## Display Themes
 
 Dark -> Light -> Night -> Dark
 
