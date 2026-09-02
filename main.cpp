@@ -88,8 +88,8 @@ LGFX_Sprite compassSprite(&tft);
 // Physical buttons remain fully functional.
 // ============================================================
 
-#define TOUCH_BUTTON_1 2
-#define TOUCH_BUTTON_2 3
+#define TOUCH_BUTTON_1 13                 
+#define TOUCH_BUTTON_2 14
 
 // Touch readings are compared with the startup baseline.
 // Your measured readings were approximately:
@@ -99,8 +99,8 @@ LGFX_Sprite compassSprite(&tft);
 // A 5000-count deviation is used as the touch trigger.
 // This detects both upward and downward changes and avoids
 // relying on the direction of the touch signal.
-const uint16_t TOUCH_DEVIATION_THRESHOLD = 2000;
-const int TOUCH_CALIBRATION_SAMPLES = 40;
+const uint16_t TOUCH_DEVIATION_THRESHOLD = 5000;
+const int TOUCH_CALIBRATION_SAMPLES = 100;
 
 uint16_t touchBaseline1 = 0;
 uint16_t touchBaseline2 = 0;
@@ -340,6 +340,63 @@ uint16_t themeLine()
     return lightTheme
         ? TFT_LIGHTGREY
         : TFT_DARKGREY;
+}
+
+void showSplashScreen()
+{
+    tft.fillScreen(
+        themeBackground()
+    );
+
+    tft.setTextDatum(
+        middle_center
+    );
+
+    tft.setFont(
+        &fonts::Font4
+    );
+
+    tft.setTextColor(
+        themeText()
+    );
+
+    tft.drawString(
+        "BIKE",
+        CX,
+        CY - 18
+    );
+
+    tft.drawString(
+        "COMPUTER",
+        CX,
+        CY + 18
+    );
+
+    tft.setFont(
+        &fonts::Font2
+    );
+    
+    tft.drawString(
+        "By Stevcrow74",
+        CX,
+        CY + 35
+    );
+
+    tft.drawCircle(
+        CX - 58,
+        CY,
+        18,
+        themeLine()
+    );
+
+    tft.drawCircle(
+        CX + 58,
+        CY,
+        18,
+        themeLine()
+    );
+
+    delay(5000);
 }
 
 // ============================================================
@@ -4250,6 +4307,9 @@ void drawBarometerFace()
 
     char tempText[16];
 
+    tft.setTextColor(
+        TFT_GREY
+    );
     snprintf(
         tempText,
         sizeof(tempText),
@@ -4260,7 +4320,7 @@ void drawBarometerFace()
     tft.drawString(
         tempText,
         BARO_CX,
-        120
+        200
     );
 
     tft.setFont(
@@ -4321,7 +4381,7 @@ void updateBarometerPage()
         tft.fillRect(
             60,
             100,
-            120,
+            125,
             50,
             themeBackground()
         );
@@ -4335,10 +4395,11 @@ void updateBarometerPage()
         return;
     }
 
-    tft.fillCircle(
-        BARO_CX,
-        BARO_CY,
-        49,
+    tft.fillRect(
+        75,
+        178,
+        80,
+        30,
         themeBackground()
     );
 
@@ -4369,7 +4430,9 @@ void updateBarometerPage()
     );
 
     char tempText[16];
-
+    tft.setTextColor(
+        TFT_GREY
+    );
     snprintf(
         tempText,
         sizeof(tempText),
@@ -5231,9 +5294,7 @@ void setup()
         false
     );
 
-    tft.fillScreen(
-        themeBackground()
-    );
+    showSplashScreen();
 
     // --------------------------------------------------------
     // I2C / BME280
