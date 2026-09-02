@@ -12,10 +12,10 @@ Firmware for a GPS bike computer based on an ESP32-S3, a 240 x 240 GC9A01 round 
 - Weather display for BME280 temperature, pressure, humidity, calculated barometric altitude, and trends.
 - Analog barometer from 980 to 1040 hPa.
 - Speed and GPS altitude history graphs covering the latest 10 minutes.
-- Dark and light display themes.
+- Dark, light and night display themes.
 - Physical buttons and capacitive touch-pad navigation.
-
-A three-mode display theme
+- 
+##Display theme
 
 Dark -> Light -> Night -> Dark
 
