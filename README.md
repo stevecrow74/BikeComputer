@@ -71,6 +71,16 @@ History is not saved to flash and clears after a restart.
 
 ## Hardware And Pinout
 
+ESP32-S3-N16R8
+
+TFT 2.18" Round Dispaly GC9A01
+
+GY-GPS6MV2 GPS Module
+
+BME280 Digital Temperature Humidity Pressure Altitude sensor
+
+
+
 ### GC9A01 Display
 
 | Signal | ESP32-S3 pin |
