@@ -310,6 +310,77 @@ enum class DisplayTheme
 
 DisplayTheme displayTheme = DisplayTheme::Dark;
 
+Preferences themeStorage;
+uint8_t screenRotation = 2;
+
+void loadDisplayTheme()
+{
+    themeStorage.begin(
+        "settings",
+        true
+    );
+
+    uint8_t storedTheme =
+        themeStorage.getUChar(
+            "theme",
+            static_cast<uint8_t>(DisplayTheme::Dark)
+        );
+
+    themeStorage.end();
+
+    if (storedTheme <= static_cast<uint8_t>(DisplayTheme::Night))
+        displayTheme = static_cast<DisplayTheme>(storedTheme);
+}
+
+void saveDisplayTheme()
+{
+    themeStorage.begin(
+        "settings",
+        false
+    );
+
+    themeStorage.putUChar(
+        "theme",
+        static_cast<uint8_t>(displayTheme)
+    );
+
+    themeStorage.end();
+}
+
+void loadScreenRotation()
+{
+    themeStorage.begin(
+        "settings",
+        true
+    );
+
+    uint8_t storedRotation =
+        themeStorage.getUChar(
+            "rotation",
+            2
+        );
+
+    themeStorage.end();
+
+    if (storedRotation <= 3)
+        screenRotation = storedRotation;
+}
+
+void saveScreenRotation()
+{
+    themeStorage.begin(
+        "settings",
+        false
+    );
+
+    themeStorage.putUChar(
+        "rotation",
+        screenRotation
+    );
+
+    themeStorage.end();
+}
+
 const unsigned long THEME_HOLD_TIME = 3000;
 
 bool themeTriggered = false;
@@ -405,6 +476,23 @@ void showSplashScreen()
         CX,
         CY + 80
     );
+    tft.setFont(
+        &fonts::Font2
+    );
+
+    tft.drawString(
+        "\"Life, don't talk to",
+        CX,
+        CY - 75
+    );
+
+    tft.drawString(  
+        "me about life!\"",
+        CX,
+        CY - 60
+    );
+
+
     tft.drawCircle(
         CX - 58,
         CY,
@@ -440,6 +528,7 @@ void showSplashScreen()
 // 5 WEATHER
 // 6 BAROMETER
 // 7 SYSTEM
+// 9 WEATHER HISTORY
 
 int currentPage = 0;
 int previousPage = -1;
@@ -504,12 +593,15 @@ bool gpsFix = false;
 // HISTORY GRAPH
 // ============================================================
 
-const int HISTORY_SAMPLE_COUNT = 60;
+const int HISTORY_SAMPLE_COUNT = 360;
 const unsigned long HISTORY_SAMPLE_INTERVAL = 10000;
 
 float speedHistory[HISTORY_SAMPLE_COUNT] = {};
 float altitudeHistory[HISTORY_SAMPLE_COUNT] = {};
 bool altitudeHistoryValid[HISTORY_SAMPLE_COUNT] = {};
+float temperatureHistory[HISTORY_SAMPLE_COUNT] = {};
+float pressureHistory[HISTORY_SAMPLE_COUNT] = {};
+bool weatherHistoryValid[HISTORY_SAMPLE_COUNT] = {};
 
 int historySampleCount = 0;
 int historyWriteIndex = 0;
@@ -541,6 +633,18 @@ void recordHistorySample()
     {
         altitudeHistory[historyWriteIndex] =
             gps.altitude.meters();
+    }
+
+    weatherHistoryValid[historyWriteIndex] =
+        bmeAvailable && havePreviousWeather;
+
+    if (weatherHistoryValid[historyWriteIndex])
+    {
+        temperatureHistory[historyWriteIndex] =
+            temperatureC;
+
+        pressureHistory[historyWriteIndex] =
+            pressureHpa;
     }
 
     historyWriteIndex =
@@ -1134,7 +1238,7 @@ void drawSatelliteSymbol(
     uint16_t colour)
 {
     const int x = 42;
-    const int y = 108;
+    const int y = 98;
 
     tft.fillRoundRect(
         x - 3,
@@ -1210,7 +1314,7 @@ void updateSatelliteSymbol()
 
     tft.fillRect(
         30,
-        91,
+        81,
         24,
         18,
         themeBackground()
@@ -1222,7 +1326,7 @@ void updateSatelliteSymbol()
 
     tft.fillRect(
         18,
-        108,
+        98,
         48,
         13,
         themeBackground()
@@ -1263,7 +1367,7 @@ void updateSatelliteSymbol()
     tft.drawString(
         satText,
         42,
-        115
+        105
     );
 }
 
@@ -1330,9 +1434,9 @@ void updateSpeed()
 {
     tft.fillRect(
         58,
-        82,
+        80,
         124,
-        43,
+        50,
         themeBackground()
     );
 
@@ -1353,7 +1457,7 @@ void updateSpeed()
     snprintf(
         speedText,
         sizeof(speedText),
-        "%02.1f",
+        "%.0f",
         speedKmh
     );
 
@@ -1472,9 +1576,9 @@ void updateMainDistance()
 {
     tft.fillRect(
         20,
-        124,
-        80,
-        39,
+        140,
+        50,
+        20,
         themeBackground()
     );
 
@@ -1522,7 +1626,9 @@ void updateMainDistance()
 // HISTORY PAGE
 // ============================================================
 
-void drawHistoryGraph(
+void drawHistorySeries(
+    int left,
+    int right,
     int top,
     int height,
     const float* values,
@@ -1532,21 +1638,10 @@ void drawHistoryGraph(
     uint16_t colour
 )
 {
-    const int left = 22;
-    const int right = 222;
-    const int bottom = top + height;
-
-    tft.drawRect(
-        left,
-        top,
-        right - left,
-        height,
-        themeLine()
-    );
-
     if (historySampleCount < 2)
         return;
 
+    const int bottom = top + height;
     int firstIndex =
         (historyWriteIndex - historySampleCount +
          HISTORY_SAMPLE_COUNT) %
@@ -1603,6 +1698,129 @@ void drawHistoryGraph(
     }
 }
 
+void drawHistoryGraph(
+    int top,
+    int height,
+    const float* values,
+    const bool* valid,
+    float minimum,
+    float maximum,
+    uint16_t colour
+)
+{
+    const int left = 40;
+    const int right = 200;
+    const int bottom = top + height;
+
+    tft.drawRect(
+        left,
+        top,
+        right - left,
+        height,
+        themeLine()
+    );
+
+    drawHistorySeries(
+        left,
+        right,
+        top,
+        height,
+        values,
+        valid,
+        minimum,
+        maximum,
+        colour
+    );
+
+    char maximumLabel[12];
+    char minimumLabel[12];
+    snprintf(maximumLabel, sizeof(maximumLabel), "%.1f", maximum);
+    snprintf(minimumLabel, sizeof(minimumLabel), "%.1f", minimum);
+
+    tft.setFont(&fonts::Font2);
+    tft.setTextDatum(middle_left);
+    tft.setTextColor(themeSecondaryText(), themeBackground());
+    tft.drawString(maximumLabel, left + 4, top + 5);
+    tft.drawString(minimumLabel, left + 4, bottom - 5);
+    tft.setTextColor(themeSecondaryText());
+    tft.setTextDatum(middle_center);
+}
+
+void drawSpeedAltitudeGraph()
+{
+    const int left = 40;
+    const int right = 200;
+    const int top = 46;
+    const int height = 161;
+    const int bottom = top + height;
+
+    tft.drawRect(
+        left,
+        top,
+        right - left,
+        height,
+        themeLine()
+    );
+
+    tft.setFont(&fonts::Font0);
+    tft.setTextDatum(middle_left);
+    tft.setTextColor(themeSecondaryText());
+
+    for (int scaleValue = 0; scaleValue <= 130; scaleValue += 10)
+    {
+        int y = bottom - 1 -
+            ((height - 2) * scaleValue) / 130;
+
+        tft.drawLine(
+            left + 1,
+            y,
+            right - 1,
+            y,
+            themeLine()
+        );
+
+    }
+
+    drawHistorySeries(
+        left,
+        right,
+        top,
+        height,
+        speedHistory,
+        nullptr,
+        0.0f,
+        130.0f,
+        TFT_RED
+    );
+
+    drawHistorySeries(
+        left,
+        right,
+        top,
+        height,
+        altitudeHistory,
+        altitudeHistoryValid,
+        0.0f,
+        130.0f,
+        TFT_BLUE
+    );
+
+    tft.setTextColor(themeSecondaryText(), themeBackground());
+
+    for (int scaleValue = 0; scaleValue <= 130; scaleValue += 10)
+    {
+        int y = bottom - 1 -
+            ((height - 2) * scaleValue) / 130;
+
+        char scaleLabel[5];
+        snprintf(scaleLabel, sizeof(scaleLabel), "%d", scaleValue);
+        tft.drawString(scaleLabel, left + 3, y);
+    }
+
+    tft.setTextColor(themeSecondaryText());
+    tft.setTextDatum(middle_center);
+}
+
 void drawHistoryPage()
 {
     tft.fillScreen(
@@ -1631,113 +1849,135 @@ void drawHistoryPage()
         &fonts::Font2
     );
 
+    tft.setTextColor(TFT_RED);
+    tft.drawString("SPEED KM/H", 76, 36);
+
+    tft.setTextColor(TFT_BLUE);
+    tft.drawString("ALTITUDE M", 164, 36);
+
+    drawSpeedAltitudeGraph();
+
     tft.setTextColor(
         themeSecondaryText()
     );
 
     tft.drawString(
-        "SPEED",
+        "1 HOUR",
+        CX,
+        224
+    );
+}
+
+void drawWeatherHistoryPage()
+{
+    tft.fillScreen(
+        themeBackground()
+    );
+
+    tft.setTextDatum(
+        middle_center
+    );
+
+    tft.setFont(
+        &fonts::Font4
+    );
+
+    tft.setTextColor(
+        TFT_GREEN
+    );
+
+    tft.drawString(
+        "WHISTORY",
+        CX,
+        16
+    );
+
+    float minimumTemperature = -5.0f;
+    float maximumTemperature = 5.0f;
+    float minimumPressure = -20.0f;
+    float maximumPressure = 20.0f;
+    bool haveWeatherHistory = false;
+
+    for (int sample = 0; sample < historySampleCount; sample++)
+    {
+        int index =
+            (historyWriteIndex - historySampleCount + sample +
+             HISTORY_SAMPLE_COUNT) %
+            HISTORY_SAMPLE_COUNT;
+
+        if (!weatherHistoryValid[index])
+            continue;
+
+        if (!haveWeatherHistory)
+        {
+            minimumTemperature = temperatureHistory[index] - 5.0f;
+            maximumTemperature = temperatureHistory[index] + 5.0f;
+            minimumPressure = pressureHistory[index] - 20.0f;
+            maximumPressure = pressureHistory[index] + 20.0f;
+            haveWeatherHistory = true;
+            break;
+        }
+    }
+
+    tft.setFont(
+        &fonts::Font2
+    );
+
+    tft.setTextColor(
+        themeSecondaryText()
+    );
+
+    tft.drawString(
+        "TEMPERATURE C",
         CX,
         36
     );
 
-    float maximumSpeedHistory = 10.0f;
-
-    for (int sample = 0; sample < historySampleCount; sample++)
-    {
-        int index =
-            (historyWriteIndex - historySampleCount + sample +
-             HISTORY_SAMPLE_COUNT) %
-            HISTORY_SAMPLE_COUNT;
-
-        if (speedHistory[index] > maximumSpeedHistory)
-            maximumSpeedHistory =
-                speedHistory[index];
-    }
-
     drawHistoryGraph(
-        46,
-        65,
-        speedHistory,
-        nullptr,
-        0.0f,
-        maximumSpeedHistory,
-        TFT_GREEN
-    );
-
-    tft.setTextColor(
-        themeSecondaryText()
+        42,
+        70,
+        temperatureHistory,
+        weatherHistoryValid,
+        minimumTemperature,
+        maximumTemperature,
+        TFT_ORANGE
     );
 
     tft.drawString(
-        "ALTITUDE",
+        "PRESSURE HPA",
         CX,
-        132
+        122
     );
-
-    float minimumAltitude = 0.0f;
-    float maximumAltitude = 1.0f;
-    bool haveAltitude = false;
-
-    for (int sample = 0; sample < historySampleCount; sample++)
-    {
-        int index =
-            (historyWriteIndex - historySampleCount + sample +
-             HISTORY_SAMPLE_COUNT) %
-            HISTORY_SAMPLE_COUNT;
-
-        if (!altitudeHistoryValid[index])
-            continue;
-
-        float altitude =
-            altitudeHistory[index];
-
-        if (!haveAltitude)
-        {
-            minimumAltitude = altitude;
-            maximumAltitude = altitude;
-            haveAltitude = true;
-        }
-        else
-        {
-            minimumAltitude = min(
-                minimumAltitude,
-                altitude
-            );
-
-            maximumAltitude = max(
-                maximumAltitude,
-                altitude
-            );
-        }
-    }
-
-    if (maximumAltitude - minimumAltitude < 10.0f)
-    {
-        float midpoint =
-            (maximumAltitude + minimumAltitude) /
-            2.0f;
-
-        minimumAltitude = midpoint - 5.0f;
-        maximumAltitude = midpoint + 5.0f;
-    }
 
     drawHistoryGraph(
-        142,
-        65,
-        altitudeHistory,
-        altitudeHistoryValid,
-        minimumAltitude,
-        maximumAltitude,
-        TFT_GREEN
+        128,
+        70,
+        pressureHistory,
+        weatherHistoryValid,
+        minimumPressure,
+        maximumPressure,
+        TFT_BLUE
     );
+
+    if (!haveWeatherHistory)
+    {
+        tft.setTextColor(
+            TFT_RED
+        );
+
+        tft.drawString(
+            bmeAvailable ? "WAITING FOR DATA" : "BME280 NOT FOUND",
+            CX,
+            108
+        );
+    }
 
     tft.setTextColor(
         themeSecondaryText()
     );
 
     tft.drawString(
-        "10 MINUTES",
+        "1 HOUR",
         CX,
         224
     );
@@ -1961,7 +2201,7 @@ void updateClock()
     tft.fillRect(
         82,
         52,
-        76,
+        60,
         24,
         themeBackground()
     );
@@ -2695,7 +2935,7 @@ void updateTripPage()
     snprintf(
         text,
         sizeof(text),
-        "%.2f km",
+        "%.3f km",
         distanceKm
     );
 
@@ -4355,28 +4595,6 @@ void drawBarometerFace()
         200
     );
 
-    tft.setFont(
-        &fonts::Font2
-    );
-
-    tft.setTextColor(
-        themeSecondaryText()
-    );
-
-    char pressureText[20];
-
-    snprintf(
-        pressureText,
-        sizeof(pressureText),
-        "%.0f hPa",
-        pressureHpa
-    );
-
-    tft.drawString(
-        pressureText,
-        BARO_CX,
-        145
-    );
 
     previousBarometerPressure =
         pressureHpa;
@@ -4479,7 +4697,7 @@ void updateBarometerPage()
     );
 
     tft.setFont(
-        &fonts::Font2
+        &fonts::Font4
     );
 
     tft.setTextColor(
@@ -4498,7 +4716,7 @@ void updateBarometerPage()
     tft.drawString(
         pressureText,
         BARO_CX,
-        145
+        160
     );
 
     if (
@@ -4704,7 +4922,7 @@ void updateSystemPage()
         45
     );
   tft.setTextColor(
-        TFT_WHITE
+        themeText()
     );
     // ESP temperature
     float espTemp =
@@ -4812,6 +5030,8 @@ void cycleDisplayTheme()
     else
         displayTheme = DisplayTheme::Dark;
 
+    saveDisplayTheme();
+
     Serial.print(
         "Display theme: "
     );
@@ -4888,6 +5108,10 @@ void drawCurrentPage()
     {
         drawWeatherPage();
     }
+    else if (currentPage == 9)
+    {
+        drawWeatherHistoryPage();
+    }
     else if (currentPage == 6)
     {
         barometerStarted = false;
@@ -4908,6 +5132,46 @@ void drawCurrentPage()
 
     pageEnteredTime =
         millis();
+}
+
+void rotateDisplay()
+{
+    screenRotation =
+        (screenRotation + 1) % 4;
+
+    tft.setRotation(
+        screenRotation
+    );
+
+    saveScreenRotation();
+    drawCurrentPage();
+}
+
+void handleButton1ShortPress(unsigned long now)
+{
+    if (currentPage == 7)
+    {
+        rotateDisplay();
+        return;
+    }
+
+    if (currentPage == 0)
+        currentPage = 1;
+    else if (currentPage == 1)
+        currentPage = 2;
+    else if (currentPage == 2)
+        currentPage = 3;
+    else if (currentPage == 3)
+        currentPage = 8;
+    else if (currentPage == 8)
+        currentPage = 4;
+    else if (currentPage == 4)
+        currentPage = 0;
+    else
+        currentPage = 0;
+
+    pageNeedsRedraw = true;
+    pageEnteredTime = now;
 }
 
 // ============================================================
@@ -5047,23 +5311,7 @@ void checkButton1()
                 duration <
                 TRIP_RESET_HOLD_TIME)
             {
-                if (currentPage == 0)
-                    currentPage = 1;
-                else if (currentPage == 1)
-                    currentPage = 2;
-                else if (currentPage == 2)
-                    currentPage = 3;
-                else if (currentPage == 3)
-                    currentPage = 8;
-                else if (currentPage == 8)
-                    currentPage = 4;
-                else if (currentPage == 4)
-                    currentPage = 0;
-                else
-                    currentPage = 0;
-
-                pageNeedsRedraw = true;
-                pageEnteredTime = now;
+                handleButton1ShortPress(now);
             }
         }
 
@@ -5093,24 +5341,7 @@ void checkButton1()
     {
         // First detection of touch
         touchButton1Handled = true;
-
-        if (currentPage == 0)
-            currentPage = 1;
-        else if (currentPage == 1)
-            currentPage = 2;
-        else if (currentPage == 2)
-            currentPage = 3;
-        else if (currentPage == 3)
-            currentPage = 8;
-        else if (currentPage == 8)
-            currentPage = 4;
-        else if (currentPage == 4)
-            currentPage = 0;
-        else
-            currentPage = 0;
-
-        pageNeedsRedraw = true;
-        pageEnteredTime = now;
+        handleButton1ShortPress(now);
     }
 }
 
@@ -5184,6 +5415,8 @@ void checkButton2()
                 else if (currentPage == 6)
                     currentPage = 7;
                 else if (currentPage == 7)
+                    currentPage = 9;
+                else if (currentPage == 9)
                     currentPage = 4;
                 else
                     currentPage = 4;
@@ -5227,6 +5460,8 @@ void checkButton2()
         else if (currentPage == 6)
             currentPage = 7;
         else if (currentPage == 7)
+            currentPage = 9;
+        else if (currentPage == 9)
             currentPage = 4;
         else
             currentPage = 4;
@@ -5283,6 +5518,9 @@ void setup()
         115200
     );
 
+    loadDisplayTheme();
+    loadScreenRotation();
+
     // --------------------------------------------------------
     // BACKLIGHT
     // --------------------------------------------------------
@@ -5325,7 +5563,7 @@ void setup()
     tft.init();
 
     tft.setRotation(
-        2
+        screenRotation
     );
 
     tft.setTextWrap(
@@ -5462,13 +5700,13 @@ void loop()
 
     readGPS();
 
-    recordHistorySample();
-
     // ========================================================
     // BME280
     // ========================================================
 
     readWeather();
+
+    recordHistorySample();
 
     // ========================================================
     // BUTTONS
@@ -5671,6 +5909,24 @@ void loop()
                 now;
 
             updateWeatherPage();
+        }
+    }
+
+    // ========================================================
+    // WEATHER HISTORY PAGE
+    // ========================================================
+
+    else if (currentPage == 9)
+    {
+        if (
+            now -
+            lastHistoryPageUpdate >=
+            1000)
+        {
+            lastHistoryPageUpdate =
+                now;
+
+            drawWeatherHistoryPage();
         }
     }
 
