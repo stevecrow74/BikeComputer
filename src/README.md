@@ -13,21 +13,26 @@ Firmware for a GPS bike computer based on an ESP32-S3, a 240 x 240 GC9A01 round 
 - Analog barometer from 980 to 1040 hPa.
 - Speed and GPS altitude history graphs covering the latest 10 minutes.
 - Dark and light display themes.
+- Four-way display rotation, saved across restarts.
 - Physical buttons and capacitive touch-pad navigation.
 
 ## Pages
 
-### Button 1 / Touch GPIO 2
+### Button 1 / Touch GPIO 13
 
-Short presses cycle through Main speedometer, Trip, GPS, Compass, Clock, and History. The next press from History returns to the main speedometer.
+Short presses cycle through Main speedometer, Trip, GPS, Compass, History, and Clock, then return to the main speedometer. On the System page, a short press instead rotates the display.
 
-Hold the physical Button 1 for 3 seconds to reset the current trip. It resets trip distance, maximum speed, and average-speed totals. The lifetime odometer is not reset.
+Touch GPIO 13 performs the same short-press action. Hold the physical Button 1 for 3 seconds to reset the current trip. It resets trip distance, maximum speed, and average-speed totals. The lifetime odometer is not reset.
 
-### Button 2 / Touch GPIO 3
+### Button 2 / Touch GPIO 14
 
-Short presses cycle through Clock, Weather, Barometer, and System.
+Short presses cycle through Clock, Weather, Barometer, System, and Weather History, then return to Clock. This button provides access to the System page, where Button 1 or Touch GPIO 13 rotates the display.
 
-Hold the physical Button 2 for 3 seconds to switch between dark and light themes.
+Hold the physical Button 2 for 3 seconds to cycle through dark, light, and night themes.
+
+## Display Rotation
+
+On the System page, a short press of Button 1 or Touch GPIO 13 advances the display through 0, 90, 180, and 270 degrees. The selected orientation is saved in ESP32 NVS and restored at startup. Button 1 returns to its normal page-cycling action on all other pages.
 
 ## Main Speedometer
 
@@ -107,8 +112,8 @@ The firmware attempts BME280 I2C addresses `0x76` and `0x77`.
 | --- | --- |
 | Physical Button 1 | GPIO 1 |
 | Physical Button 2 | GPIO 20 |
-| Touch pad 1 | GPIO 2 |
-| Touch pad 2 | GPIO 3 |
+| Touch pad 1 | GPIO 13 |
+| Touch pad 2 | GPIO 14 |
 
 The physical buttons use `INPUT_PULLUP` and should pull their GPIO low when pressed.
 
